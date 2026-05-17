@@ -447,6 +447,8 @@ export default function CardPage({ isTemplate }: { isTemplate?: boolean }) {
                   />
                   {!isTemplate && (
                     <>
+                      {typeof window !== "undefined" &&
+                        console.log("[card/index] card.attachments:", card?.attachments)}
                       {card?.attachments.length > 0 && (
                         <div className="mt-6">
                           <AttachmentThumbnails

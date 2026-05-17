@@ -35,6 +35,9 @@ export function AttachmentThumbnails({
 }) {
   const { showPopup } = usePopup();
   const utils = api.useUtils();
+  if (typeof window !== "undefined") {
+    console.log("[AttachmentThumbnails] received attachments:", attachments);
+  }
   const imageAttachments =
     attachments?.filter(
       (attachment) =>
@@ -46,6 +49,13 @@ export function AttachmentThumbnails({
       (attachment) =>
         !attachment.contentType.startsWith("image/") && attachment.url,
     ) ?? [];
+
+  if (typeof window !== "undefined") {
+    console.log("[AttachmentThumbnails] split", {
+      imageCount: imageAttachments.length,
+      nonImageCount: nonImageAttachments.length,
+    });
+  }
 
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 

@@ -686,9 +686,16 @@ export const cardRouter = createTRPCRouter({
         });
 
       // Generate URLs for all attachments
+      console.log("[card.byId] attachments raw count:", result.attachments.length);
       const attachmentsWithUrls = await Promise.all(
         result.attachments.map(async (attachment) => {
           const url = await generateAttachmentUrl(attachment.s3Key);
+          console.log("[card.byId] attachment", {
+            publicId: attachment.publicId,
+            s3Key: attachment.s3Key,
+            resolvedUrl: url,
+            originalFilename: attachment.originalFilename,
+          });
           return {
             publicId: attachment.publicId,
             contentType: attachment.contentType,
@@ -699,6 +706,7 @@ export const cardRouter = createTRPCRouter({
           };
         }),
       );
+      console.log("[card.byId] attachmentsWithUrls final count:", attachmentsWithUrls.length);
 
       // Generate presigned URLs for workspace member avatars
       const workspaceWithAvatarUrls = result.list.board.workspace

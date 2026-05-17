@@ -191,6 +191,15 @@ export async function generateAttachmentUrl(
     return null;
   }
 
+  // Cloudflare Images stores the full public delivery URL in `s3Key`,
+  // so pass it through directly — there's no bucket / signing needed.
+  if (
+    attachmentKey.startsWith("http://") ||
+    attachmentKey.startsWith("https://")
+  ) {
+    return attachmentKey;
+  }
+
   const bucket = env("NEXT_PUBLIC_ATTACHMENTS_BUCKET_NAME");
   if (!bucket) {
     return null;

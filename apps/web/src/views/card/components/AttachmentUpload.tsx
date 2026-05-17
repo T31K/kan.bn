@@ -20,33 +20,60 @@ export function AttachmentUpload({ cardPublicId }: { cardPublicId: string }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const uploadFile = async (file: File) => {
+    console.log("[AttachmentUpload] uploadFile called", {
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      cardPublicId,
+    });
     setUploading(true);
 
     try {
       const baseUrl = env("NEXT_PUBLIC_BASE_URL") ?? "";
-      const response = await fetch(
-        `${baseUrl}/api/upload/attachment?cardPublicId=${encodeURIComponent(cardPublicId)}`,
-        {
+      const url = `${baseUrl}/api/upload/attachment?cardPublicId=${encodeURIComponent(cardPublicId)}`;
+      console.log("[AttachmentUpload] POSTing to", url, {
+        contentType: file.type,
+        contentLength: file.size,
+      });
+
+      let response: Response;
+      try {
+        response = await fetch(url, {
           method: "POST",
           headers: {
             "Content-Type": file.type,
             "x-original-filename": file.name,
           },
           body: file,
-        },
-      );
+        });
+      } catch (netErr) {
+        console.error("[AttachmentUpload] fetch threw", netErr);
+        throw netErr;
+      }
+      console.log("[AttachmentUpload] response", {
+        status: response.status,
+        ok: response.ok,
+        statusText: response.statusText,
+      });
 
       if (!response.ok) {
-        throw new Error("Upload failed");
+        const body = await response.text().catch(() => "<unreadable>");
+        console.error("[AttachmentUpload] non-OK body:", body);
+        throw new Error(`Upload failed: ${response.status} ${body}`);
       }
 
+      const json = await response.json().catch(() => null);
+      console.log("[AttachmentUpload] success payload", json);
+
       await invalidateCard(utils, cardPublicId);
+      console.log("[AttachmentUpload] card invalidated");
       showPopup({
         header: t`Attachment uploaded`,
         message: t`Your file has been uploaded successfully.`,
         icon: "success",
       });
-    } catch {
+    } catch (e) {
+      console.error("[AttachmentUpload] upload FAILED", e);
       showPopup({
         header: t`Upload failed`,
         message: t`Failed to upload attachment. Please try again.`,
@@ -60,6 +87,10 @@ export function AttachmentUpload({ cardPublicId }: { cardPublicId: string }) {
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
     const file = event.target.files?.[0];
+    console.log("[AttachmentUpload] handleFileSelect", {
+      hasFile: !!file,
+      name: file?.name,
+    });
     if (!file) return;
 
     // Reset input
@@ -86,13 +117,16 @@ export function AttachmentUpload({ cardPublicId }: { cardPublicId: string }) {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
+    console.log("[AttachmentUpload] handleDrop", {
+      uploading,
+      fileCount: e.dataTransfer.files.length,
+    });
 
     if (uploading) return;
 
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
 
-    // Upload the first file (or could upload all files)
     await uploadFile(files[0] ?? new File([], ""));
   };
 

@@ -1,5 +1,7 @@
 import { t } from "@lingui/core/macro";
-import { useRef, useState } from "react";
+import { env } from "next-runtime-env";
+import { useCallback, useState } from "react";
+import { useDropzone } from "react-dropzone";
 import { HiOutlinePaperClip } from "react-icons/hi";
 import { HiCheckBadge } from "react-icons/hi2";
 import { twMerge } from "tailwind-merge";
@@ -7,7 +9,6 @@ import { twMerge } from "tailwind-merge";
 import Button from "~/components/Button";
 import { useModal } from "~/providers/modal";
 import { usePopup } from "~/providers/popup";
-import { env } from "next-runtime-env";
 import { api } from "~/utils/api";
 import { invalidateCard } from "~/utils/cardInvalidation";
 
@@ -16,141 +17,87 @@ export function AttachmentUpload({ cardPublicId }: { cardPublicId: string }) {
   const { showPopup } = usePopup();
   const utils = api.useUtils();
   const [uploading, setUploading] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const uploadFile = async (file: File) => {
-    console.log("[AttachmentUpload] uploadFile called", {
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      cardPublicId,
-    });
-    setUploading(true);
-
-    try {
-      const baseUrl = env("NEXT_PUBLIC_BASE_URL") ?? "";
-      const url = `${baseUrl}/api/upload/attachment?cardPublicId=${encodeURIComponent(cardPublicId)}`;
-      console.log("[AttachmentUpload] POSTing to", url, {
-        contentType: file.type,
-        contentLength: file.size,
+  const uploadFile = useCallback(
+    async (file: File) => {
+      console.log("[AttachmentUpload] uploadFile", {
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        cardPublicId,
       });
+      setUploading(true);
 
-      let response: Response;
       try {
-        response = await fetch(url, {
+        const baseUrl = env("NEXT_PUBLIC_BASE_URL") ?? "";
+        const url = `${baseUrl}/api/upload/attachment?cardPublicId=${encodeURIComponent(cardPublicId)}`;
+
+        const response = await fetch(url, {
           method: "POST",
           headers: {
             "Content-Type": file.type,
-            "x-original-filename": file.name,
+            // Headers must be ISO-8859-1; encode to preserve unicode filenames.
+            "x-original-filename": encodeURIComponent(file.name),
           },
           body: file,
         });
-      } catch (netErr) {
-        console.error("[AttachmentUpload] fetch threw", netErr);
-        throw netErr;
+        console.log("[AttachmentUpload] response", response.status);
+
+        if (!response.ok) {
+          const body = await response.text().catch(() => "<unreadable>");
+          throw new Error(`Upload failed: ${response.status} ${body}`);
+        }
+
+        await invalidateCard(utils, cardPublicId);
+        showPopup({
+          header: t`Attachment uploaded`,
+          message: t`Your file has been uploaded successfully.`,
+          icon: "success",
+        });
+      } catch (e) {
+        console.error("[AttachmentUpload] upload FAILED", e);
+        showPopup({
+          header: t`Upload failed`,
+          message: t`Failed to upload attachment. Please try again.`,
+          icon: "error",
+        });
+      } finally {
+        setUploading(false);
       }
-      console.log("[AttachmentUpload] response", {
-        status: response.status,
-        ok: response.ok,
-        statusText: response.statusText,
-      });
+    },
+    [cardPublicId, showPopup, utils],
+  );
 
-      if (!response.ok) {
-        const body = await response.text().catch(() => "<unreadable>");
-        console.error("[AttachmentUpload] non-OK body:", body);
-        throw new Error(`Upload failed: ${response.status} ${body}`);
-      }
+  const onDrop = useCallback(
+    async (acceptedFiles: File[]) => {
+      console.log("[AttachmentUpload] onDrop", { count: acceptedFiles.length });
+      const file = acceptedFiles[0];
+      if (!file) return;
+      await uploadFile(file);
+    },
+    [uploadFile],
+  );
 
-      const json = await response.json().catch(() => null);
-      console.log("[AttachmentUpload] success payload", json);
-
-      await invalidateCard(utils, cardPublicId);
-      console.log("[AttachmentUpload] card invalidated");
-      showPopup({
-        header: t`Attachment uploaded`,
-        message: t`Your file has been uploaded successfully.`,
-        icon: "success",
-      });
-    } catch (e) {
-      console.error("[AttachmentUpload] upload FAILED", e);
-      showPopup({
-        header: t`Upload failed`,
-        message: t`Failed to upload attachment. Please try again.`,
-        icon: "error",
-      });
-      setUploading(false);
-    }
-  };
-
-  const handleFileSelect = async (
-    event: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    const file = event.target.files?.[0];
-    console.log("[AttachmentUpload] handleFileSelect", {
-      hasFile: !!file,
-      name: file?.name,
-    });
-    if (!file) return;
-
-    // Reset input
-    event.target.value = "";
-
-    await uploadFile(file);
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!uploading) {
-      setIsDragging(true);
-    }
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  };
-
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-    console.log("[AttachmentUpload] handleDrop", {
-      uploading,
-      fileCount: e.dataTransfer.files.length,
-    });
-
-    if (uploading) return;
-
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length === 0) return;
-
-    await uploadFile(files[0] ?? new File([], ""));
-  };
+  const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
+    onDrop,
+    multiple: false,
+    disabled: uploading,
+    noClick: true,
+    noKeyboard: true,
+  });
 
   return (
     <div className="mb-6">
-      <input
-        ref={inputRef}
-        type="file"
-        id="attachment-upload"
-        className="hidden"
-        onChange={handleFileSelect}
-        disabled={uploading}
-      />
       <div
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
+        {...getRootProps()}
         className={twMerge(
           "rounded-lg border-2 border-dashed transition-colors",
-          isDragging
+          isDragActive
             ? "border-light-300 bg-light-100 dark:border-dark-300 dark:bg-dark-100"
             : "border-transparent",
         )}
       >
+        <input {...getInputProps()} />
         <div className="flex items-center justify-between p-2">
           <Button
             type="button"
@@ -172,7 +119,7 @@ export function AttachmentUpload({ cardPublicId }: { cardPublicId: string }) {
             disabled={uploading}
             iconOnly
             size="sm"
-            onClick={() => inputRef.current?.click()}
+            onClick={open}
           />
         </div>
       </div>

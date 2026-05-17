@@ -57,8 +57,15 @@ export default withRateLimit(
         return res.status(400).json({ error: "File too large" });
       }
 
-      const originalFilenameHeader =
+      const rawFilenameHeader =
         (req.headers["x-original-filename"] as string | undefined) ?? "file";
+      // Client URL-encodes the header to allow unicode (headers are Latin-1 only).
+      let originalFilenameHeader = rawFilenameHeader;
+      try {
+        originalFilenameHeader = decodeURIComponent(rawFilenameHeader);
+      } catch {
+        // Fall back to the raw value if it wasn't URL-encoded.
+      }
 
       const sanitizedFilename = originalFilenameHeader
         .replace(/[^a-zA-Z0-9._-]/g, "_")

@@ -1,13 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
 
 import { createNextApiContext } from "@kan/api/trpc";
 import { withApiLogging } from "@kan/api/utils/apiLogging";
 import { withRateLimit } from "@kan/api/utils/rateLimit";
 import * as userRepo from "@kan/db/repository/user.repo";
-import { createS3Client } from "@kan/shared/utils";
-
-import { env } from "~/env";
+import { uploadToCloudflareImages } from "@kan/shared/utils";
 
 const MAX_SIZE_BYTES = parseInt(
   process.env.S3_AVATAR_UPLOAD_LIMIT || "2097152",
@@ -33,11 +30,6 @@ export default withRateLimit(
 
       if (!user) {
         return res.status(401).json({ error: "Unauthorized" });
-      }
-
-      const bucket = env.NEXT_PUBLIC_AVATAR_BUCKET_NAME;
-      if (!bucket) {
-        return res.status(500).json({ error: "Avatar bucket not configured" });
       }
 
       const contentType = req.headers["content-type"];
@@ -71,22 +63,21 @@ export default withRateLimit(
         .replace(/[^a-zA-Z0-9._-]/g, "_")
         .substring(0, 200);
 
-      const s3Key = `${user.id}/${sanitizedFilename}`;
+      // Buffer the request body, then upload to Cloudflare Images.
+      // We store the public delivery URL directly in `user.image`.
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const fileBuffer = Buffer.concat(chunks);
 
-      const client = createS3Client();
-
-      // Upload the file to S3
-      await client.send(
-        new PutObjectCommand({
-          Bucket: bucket,
-          Key: s3Key,
-          Body: req,
-          ContentType: contentType,
-          ContentLength: contentLength,
-        }),
+      const cfFilename = `${user.id}-${sanitizedFilename}`;
+      const s3Key = await uploadToCloudflareImages(
+        fileBuffer,
+        cfFilename,
+        contentType,
       );
 
-      // Update user image in database
       const updatedUser = await userRepo.update(db, user.id, {
         image: s3Key,
       });

@@ -10,7 +10,7 @@ import { generateUID } from "@kan/shared/utils";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { attachmentConfirmResponseSchema } from "../schemas";
 import { assertPermission } from "../utils/permissions";
-import { deleteObject, generateUploadUrl } from "@kan/shared/utils";
+import { deleteCloudflareImage, generateUploadUrl } from "@kan/shared/utils";
 
 export const attachmentRouter = createTRPCRouter({
   generateUploadUrl: protectedProcedure
@@ -196,16 +196,17 @@ export const attachmentRouter = createTRPCRouter({
       const workspaceId = attachment.card.list.board.workspaceId;
       await assertPermission(ctx.db, userId, workspaceId, "card:edit");
 
-      const bucket = process.env.NEXT_PUBLIC_ATTACHMENTS_BUCKET_NAME;
-      if (bucket) {
-        try {
-          await deleteObject(bucket, attachment.s3Key);
-        } catch (error) {
-          console.error(
-            `Failed to delete attachment from S3: ${attachment.s3Key}`,
-            error,
-          );
-        }
+      // Best-effort cleanup of the underlying image. With Cloudflare Images
+      // the stored `s3Key` is the public delivery URL — the helper extracts
+      // the image ID and DELETEs it. If creds aren't set or the call fails
+      // we log and move on (the DB soft-delete still succeeds).
+      try {
+        await deleteCloudflareImage(attachment.s3Key);
+      } catch (error) {
+        console.error(
+          `Failed to delete Cloudflare image: ${attachment.s3Key}`,
+          error,
+        );
       }
 
       await cardAttachmentRepo.softDelete(ctx.db, {

@@ -7,6 +7,79 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env } from "next-runtime-env";
 
+// Cloudflare Images backend — uploads a buffer to CF Images and returns
+// the public delivery URL (`variants[0]`). Used by the upload routes when
+// CF Images is configured instead of S3.
+export async function uploadToCloudflareImages(
+  file: Buffer,
+  filename: string,
+  contentType: string,
+): Promise<string> {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const apiKey = process.env.CLOUDFLARE_API_KEY;
+
+  if (!accountId || !apiKey) {
+    throw new Error(
+      "CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_KEY must be set to use Cloudflare Images uploads",
+    );
+  }
+
+  const form = new FormData();
+  form.append("file", new Blob([file], { type: contentType }), filename);
+
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/images/v1`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+    },
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Cloudflare Images upload failed (${res.status}): ${text}`);
+  }
+
+  const json = (await res.json()) as {
+    success: boolean;
+    result?: { id: string; variants?: string[] };
+    errors?: { message: string }[];
+  };
+
+  if (!json.success || !json.result?.variants?.[0]) {
+    throw new Error(
+      `Cloudflare Images upload returned no variant URL: ${JSON.stringify(json.errors ?? json)}`,
+    );
+  }
+
+  return json.result.variants[0];
+}
+
+// Best-effort delete on Cloudflare Images. We store the public delivery URL
+// (e.g. https://imagedelivery.net/<account-hash>/<image-id>/<variant>), so
+// extract the image ID and call the CF Images delete endpoint.
+export async function deleteCloudflareImage(
+  urlOrId: string,
+): Promise<void> {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const apiKey = process.env.CLOUDFLARE_API_KEY;
+  if (!accountId || !apiKey) return;
+
+  const id = urlOrId.startsWith("http")
+    ? urlOrId.replace(/\/+$/, "").split("/").slice(-2, -1)[0]
+    : urlOrId;
+  if (!id) return;
+
+  await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/images/v1/${id}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${apiKey}` },
+    },
+  );
+}
+
 export function createS3Client() {
   const credentials =
     process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY

@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { Upload } from "@aws-sdk/lib-storage";
 
 import { createNextApiContext } from "@kan/api/trpc";
 import { withApiLogging } from "@kan/api/utils/apiLogging";
@@ -8,9 +7,7 @@ import { withRateLimit } from "@kan/api/utils/rateLimit";
 import * as cardRepo from "@kan/db/repository/card.repo";
 import * as cardActivityRepo from "@kan/db/repository/cardActivity.repo";
 import * as cardAttachmentRepo from "@kan/db/repository/cardAttachment.repo";
-import { createS3Client, generateUID } from "@kan/shared/utils";
-
-import { env } from "~/env";
+import { generateUID, uploadToCloudflareImages } from "@kan/shared/utils";
 
 // FIXME: Respect the environment variable: NEXT_API_BODY_SIZE_LIMIT
 const MAX_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
@@ -33,13 +30,6 @@ export default withRateLimit(
 
       if (!user) {
         return res.status(401).json({ error: "Unauthorized" });
-      }
-
-      const bucket = env.NEXT_PUBLIC_ATTACHMENTS_BUCKET_NAME;
-      if (!bucket) {
-        return res
-          .status(500)
-          .json({ error: "Attachments bucket not configured" });
       }
 
       const cardPublicId = req.query.cardPublicId;
@@ -91,23 +81,21 @@ export default withRateLimit(
         return res.status(403).json({ error: "Permission denied" });
       }
 
-      const s3Key = `${card.workspaceId}/${cardPublicId}/${generateUID()}-${sanitizedFilename}`;
+      // Buffer the request body, then upload to Cloudflare Images.
+      // The returned `s3Key` is the public delivery URL — the read path
+      // (generateAttachmentUrl) passes through `http(s)://` keys as-is.
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const fileBuffer = Buffer.concat(chunks);
 
-      const client = createS3Client();
-
-      const upload = new Upload({
-        client,
-        params: {
-          Bucket: bucket,
-          Key: s3Key,
-          Body: req,
-          ContentType: contentType,
-          ContentLength: contentLength,
-        },
-        leavePartsOnError: false,
-      });
-
-      await upload.done();
+      const cfFilename = `${card.workspaceId}-${cardPublicId}-${generateUID()}-${sanitizedFilename}`;
+      const s3Key = await uploadToCloudflareImages(
+        fileBuffer,
+        cfFilename,
+        contentType,
+      );
 
       // Create attachment record and log activity
       const attachment = await cardAttachmentRepo.create(db, {

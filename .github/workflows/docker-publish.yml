@@ -7,17 +7,10 @@ name: Docker
 
 on:
   push:
-    # Only trigger on tags (releases), not main branch pushes
-    # Main branch builds are handled by workflow_run after Translate completes
     tags: ["v*.*.*"]
   pull_request:
     branches: ["main"]
-  workflow_run:
-    workflows: ["Translate"]
-    types: [completed]
-    branches: [main]
-    # Docker builds after Translate completes (success or failure)
-    # This ensures Docker always has the latest translations
+  workflow_dispatch:
 
 env:
   # Use docker.io for Docker Hub if empty

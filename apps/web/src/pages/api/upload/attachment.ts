@@ -81,23 +81,39 @@ export default withRateLimit(
         return res.status(403).json({ error: "Permission denied" });
       }
 
+      console.log("[upload/attachment] incoming", {
+        cardPublicId,
+        contentType,
+        contentLength,
+        originalFilenameHeader,
+        cfAccount: !!process.env.CLOUDFLARE_ACCOUNT_ID,
+        cfKey: !!process.env.CLOUDFLARE_API_KEY,
+      });
+
       // Buffer the request body, then upload to Cloudflare Images.
-      // The returned `s3Key` is the public delivery URL — the read path
-      // (generateAttachmentUrl) passes through `http(s)://` keys as-is.
       const chunks: Buffer[] = [];
       for await (const chunk of req) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       }
       const fileBuffer = Buffer.concat(chunks);
+      console.log("[upload/attachment] buffered", { bytes: fileBuffer.length });
 
       const cfFilename = `${card.workspaceId}-${cardPublicId}-${generateUID()}-${sanitizedFilename}`;
-      const s3Key = await uploadToCloudflareImages(
-        fileBuffer,
-        cfFilename,
-        contentType,
-      );
+      let s3Key: string;
+      try {
+        s3Key = await uploadToCloudflareImages(
+          fileBuffer,
+          cfFilename,
+          contentType,
+        );
+        console.log("[upload/attachment] CF upload OK", { s3Key });
+      } catch (cfErr) {
+        console.error("[upload/attachment] CF upload FAILED", cfErr);
+        return res
+          .status(500)
+          .json({ error: `CF upload failed: ${(cfErr as Error).message}` });
+      }
 
-      // Create attachment record and log activity
       const attachment = await cardAttachmentRepo.create(db, {
         cardId: card.id,
         filename: sanitizedFilename,
@@ -106,6 +122,9 @@ export default withRateLimit(
         size: contentLength,
         s3Key,
         createdBy: user.id,
+      });
+      console.log("[upload/attachment] DB row created", {
+        id: attachment?.id,
       });
 
       if (!attachment) {
@@ -122,7 +141,10 @@ export default withRateLimit(
 
       return res.status(200).json({ attachment });
     } catch (error) {
-      return res.status(500).json({ error: "Internal server error" });
+      console.error("[upload/attachment] unhandled error", error);
+      return res
+        .status(500)
+        .json({ error: `Internal: ${(error as Error).message}` });
     }
   }),
 );
